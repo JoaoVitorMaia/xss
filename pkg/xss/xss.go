@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -14,6 +15,13 @@ var HtmlInjectionTags = []string{
 	"<s>gr3p",
 	`"><b>gr3p`,
 }
+
+var ReflectedOnTagAtribute = []string{
+	`gr3pth1s"`,
+	`gr3pth1s'`,
+}
+
+var insideTagReflectionRegex = `<([^<>]*)gr3pth1s["']([^<>]*)>`
 
 type UrlParameter struct {
 	key   string
@@ -35,19 +43,25 @@ func CreateUrls(raw_url string) []string {
 			result = append(result, parsed_url.String())
 			qs.Set(key, oldval)
 		}
+		for _, payload := range ReflectedOnTagAtribute {
+			oldval := value[0] // unfortunately qs.Set() only accepts string not []string, so ?xyz=abc&xyz=3 would only consider abc(resulting on ?xyz=abc)
+			qs.Set(key, payload)
+			parsed_url.RawQuery = qs.Encode()
+			result = append(result, parsed_url.String())
+			qs.Set(key, oldval)
+		}
 
 	}
 	return result
 }
 
-func FindXss(url string, headers []string, timeout int) []string {
-	var results []string
+func FindXss(url string, headers []string, timeout int) string {
 	client := &http.Client{
 		Timeout: time.Duration(timeout) * time.Second,
 	}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return []string{}
+		return ""
 	}
 	for _, header := range headers {
 		parts := strings.Split(header, ":")
@@ -55,21 +69,25 @@ func FindXss(url string, headers []string, timeout int) []string {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return []string{}
+		return ""
 	}
 	defer resp.Body.Close()
 
 	body_buff, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return []string{}
+		return ""
 	}
 	body := string(body_buff)
 	for _, payload := range HtmlInjectionTags {
 		if strings.Contains(payload, body) && body != "" {
 			fmt.Printf("%s reflection found\n", url)
-			results = append(results, url)
+			return url
 		}
 	}
-	return results
-
+	r, _ := regexp.Compile(insideTagReflectionRegex)
+	if r.MatchString(body) {
+		fmt.Printf("%s reflection found\n", url)
+		return url
+	}
+	return ""
 }
