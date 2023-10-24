@@ -4,16 +4,10 @@ The tool aims to identify html injection possibilities in GET parameters, lettin
 
 ### Install
 
-<code>
-go install github.com/joaovitormaia/xss@latest
-</code>
+<code>go install github.com/joaovitormaia/xss@latest</code>
 
 ### Usage
-<code>
-cat urls.txt | xss -o output.txt
-</code>
+<code>cat urls.txt | xss -o output.txt</code>
 
 ### Help
-<code>
-xss -h
-</code>
+<code>xss -h</code>
