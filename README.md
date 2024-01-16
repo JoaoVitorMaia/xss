@@ -9,5 +9,7 @@ The tool aims to identify html injection possibilities in GET parameters, lettin
 ### Usage
 <code>cat urls.txt | xss -o output.txt</code>
 
+<code>xss -i urls.txt</code>
+
 ### Help
 <code>xss -h</code>
