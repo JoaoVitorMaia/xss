@@ -21,7 +21,8 @@ var ReflectedOnTagAtribute = []string{
 	`gr3pth1s'`,
 }
 
-var insideTagReflectionRegex = `<([^<>]*)gr3pth1s["']([^<>]*)>`
+var insideTagReflectionRegex = `(?i)<([^<>]*)gr3pth1s["']([^<>]*)>`
+var notInComment = `<!--[\s\S]*?gr3pth1s[\s\S]*?-->`
 
 type UrlParameter struct {
 	key   string
@@ -79,13 +80,15 @@ func FindXss(url string, headers []string, timeout int) string {
 	}
 	body := string(body_buff)
 	for _, payload := range HtmlInjectionTags {
-		if strings.Contains(payload, body) && body != "" {
+		if strings.Contains(body, payload) {
 			fmt.Printf("%s reflection found\n", url)
 			return url
 		}
 	}
 	r, _ := regexp.Compile(insideTagReflectionRegex)
-	if r.MatchString(body) {
+	r2, _ := regexp.Compile(notInComment)
+	matches := r.FindStringSubmatch(body)
+	if len(matches) > 0 && !r2.MatchString(matches[0]) {
 		fmt.Printf("%s reflection found\n", url)
 		return url
 	}
