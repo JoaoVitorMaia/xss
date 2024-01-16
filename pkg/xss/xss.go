@@ -56,13 +56,27 @@ func CreateUrls(raw_url string) []string {
 	return result
 }
 
-func FindXss(url string, headers []string, timeout int) string {
-	client := &http.Client{
-		Timeout: time.Duration(timeout) * time.Second,
+func FindXss(url_to_validate string, headers []string, timeout int, debug_codes []int, debug_responses chan string, proxy string) (string, bool) {
+	var client *http.Client
+	if proxy == "" {
+		client = &http.Client{
+			Timeout: time.Duration(timeout) * time.Second,
+		}
+	} else {
+		proxyUrl, err := url.Parse(proxy)
+		if err != nil {
+			panic(err)
+		}
+		client = &http.Client{
+			Timeout: time.Duration(timeout) * time.Second,
+			Transport: &http.Transport{
+				Proxy: http.ProxyURL(proxyUrl),
+			},
+		}
 	}
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", url_to_validate, nil)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	for _, header := range headers {
 		parts := strings.Split(header, ":")
@@ -70,27 +84,27 @@ func FindXss(url string, headers []string, timeout int) string {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	defer resp.Body.Close()
 
 	body_buff, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	body := string(body_buff)
 	for _, payload := range HtmlInjectionTags {
 		if strings.Contains(body, payload) {
-			fmt.Printf("%s reflection found\n", url)
-			return url
+			fmt.Printf("%s reflection found\n", url_to_validate)
+			return url_to_validate, true
 		}
 	}
 	r, _ := regexp.Compile(insideTagReflectionRegex)
 	r2, _ := regexp.Compile(notInComment)
 	matches := r.FindStringSubmatch(body)
 	if len(matches) > 0 && !r2.MatchString(matches[0]) {
-		fmt.Printf("%s reflection found\n", url)
-		return url
+		fmt.Printf("%s reflection found\n", url_to_validate)
+		return url_to_validate, true
 	}
-	return ""
+	return "", false
 }
