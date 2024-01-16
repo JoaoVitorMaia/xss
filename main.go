@@ -28,6 +28,7 @@ func main() {
 	debug := parser.Flag("d", "debug", &argparse.Options{Required: false, Default: false})
 	err := parser.Parse(os.Args)
 	var results []string
+	var inputs_processed int
 	if err != nil {
 		// In case of error print error and print usage
 		// This can also be done by passing -h or --help flags
@@ -49,11 +50,12 @@ func main() {
 	period := time.Second / time.Duration(*rate_limit)
 
 	// Create a channel to control the rate
+	counter := ratecounter.NewRateCounter(1 * time.Second)
+
 	limiter := time.Tick(period)
 	for scanner.Scan() {
 
 		input_url := scanner.Text()
-		counter := ratecounter.NewRateCounter(1 * time.Second)
 
 		urls := xss.CreateUrls(input_url)
 		counter.Incr(1)
@@ -69,11 +71,12 @@ func main() {
 				wg.Done()
 				<-semaphore
 				if *debug {
-					fmt.Printf("%d requests per second\r", counter.Rate())
+					fmt.Printf("\x1b[2K%d requests per second, %d inputs processed\r", counter.Rate(), inputs_processed)
 				}
 			}(url)
 
 		}
+		inputs_processed++
 
 	}
 	wg.Wait()
@@ -84,5 +87,8 @@ func main() {
 		}
 		defer file.Close()
 		file.WriteString(strings.Join(results, "\n"))
+	}
+	if *debug {
+		fmt.Printf("\x1b[2K%d inputs processed\n", inputs_processed)
 	}
 }
