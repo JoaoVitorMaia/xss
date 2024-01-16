@@ -1,13 +1,18 @@
 package xss
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
+
+	"golang.org/x/exp/slices"
 )
 
 var HtmlInjectionTags = []string{
@@ -55,8 +60,41 @@ func CreateUrls(raw_url string) []string {
 	}
 	return result
 }
-
-func FindXss(url_to_validate string, headers []string, timeout int, debug_codes []int, debug_responses chan string, proxy string) (string, bool) {
+func createDebugString(req http.Request, resp http.Response) string {
+	var debug_string []string
+	debug_string = append(debug_string, fmt.Sprintf("%s %s %s", req.Method, req.URL.RequestURI(), req.Proto))
+	debug_string = append(debug_string, fmt.Sprintf("Host: %s", req.Host))
+	for key, values := range req.Header {
+		for _, value := range values {
+			debug_string = append(debug_string, fmt.Sprintf("%s: %s", key, value))
+		}
+	}
+	debug_string = append(debug_string, "\n")
+	debug_string = append(debug_string, "---- ↑ Request ---- Response ↓ ----\n")
+	debug_string = append(debug_string, fmt.Sprintf("%s %s", resp.Proto, resp.Status))
+	for key, values := range resp.Header {
+		for _, value := range values {
+			debug_string = append(debug_string, fmt.Sprintf("%s: %s", key, value))
+		}
+	}
+	debug_string = append(debug_string, "\n")
+	body_buff, _ := ioutil.ReadAll(resp.Body)
+	debug_string = append(debug_string, string(body_buff))
+	return strings.Join(debug_string, "\n")
+}
+func AppendResultToOutputFile(result string, outputfile string) {
+	file, err := os.OpenFile(outputfile,
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Println(err)
+	}
+	defer file.Close()
+	if err != nil {
+		panic(err)
+	}
+	file.WriteString(fmt.Sprintf("%s\n", result))
+}
+func FindXss(url_to_validate string, headers []string, timeout int, debug_codes []int, debug_responses chan string, proxy string, elogfilename string) (string, bool) {
 	var client *http.Client
 	if proxy == "" {
 		client = &http.Client{
@@ -70,29 +108,51 @@ func FindXss(url_to_validate string, headers []string, timeout int, debug_codes 
 		client = &http.Client{
 			Timeout: time.Duration(timeout) * time.Second,
 			Transport: &http.Transport{
-				Proxy: http.ProxyURL(proxyUrl),
+				Proxy:           http.ProxyURL(proxyUrl),
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			},
 		}
 	}
 	req, err := http.NewRequest("GET", url_to_validate, nil)
 	if err != nil {
+		if elogfilename != "" {
+			AppendResultToOutputFile(err.Error(), elogfilename)
+		}
 		return "", false
 	}
+	has_user_agent := false
 	for _, header := range headers {
 		parts := strings.Split(header, ":")
+		if parts[0] == "User-Agent" {
+			has_user_agent = true
+		}
 		req.Header.Set(parts[0], strings.Join(parts[1:], ":"))
+	}
+	if !has_user_agent {
+		req.Header.Set("User-Agent", "xss-fuzzer")
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		if elogfilename != "" {
+			AppendResultToOutputFile(err.Error(), elogfilename)
+		}
 		return "", false
 	}
+
 	defer resp.Body.Close()
 
 	body_buff, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
+		if elogfilename != "" {
+			AppendResultToOutputFile(err.Error(), elogfilename)
+		}
 		return "", false
 	}
 	body := string(body_buff)
+	if slices.Contains(debug_codes, resp.StatusCode) {
+
+		debug_responses <- createDebugString(*req, *resp)
+	}
 	for _, payload := range HtmlInjectionTags {
 		if strings.Contains(body, payload) {
 			fmt.Printf("%s reflection found\n", url_to_validate)
