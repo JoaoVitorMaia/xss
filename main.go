@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -31,14 +32,15 @@ func main() {
 	headers := parser.StringList("H", "headers", &argparse.Options{Required: false, Help: "Curl like headers"})
 	timeout := parser.Int("t", "timeout", &argparse.Options{Required: false, Default: 10, Help: "Request timeout"})
 	concurrency := parser.Int("c", "concurrency", &argparse.Options{Required: false, Default: 40, Help: "Limit concurrency"})
-	input := parser.String("i", "input", &argparse.Options{Required: false})
-	output_file := parser.String("o", "output", &argparse.Options{Required: false})
-	rate_limit := parser.Int("r", "rate-limit", &argparse.Options{Required: false, Default: -1, Help: "Limit requests per second"})
+	input := parser.String("i", "input", &argparse.Options{Required: false, Help: "Input file"})
+	output_file := parser.String("o", "output", &argparse.Options{Required: false, Help: "Output file"})
+	rate_limit := parser.Int("r", "rate-limit", &argparse.Options{Required: false, Default: 10000, Help: "Limit requests per second"})
 	debug := parser.Flag("d", "debug", &argparse.Options{Required: false, Default: false})
 	debug_folder := parser.String("", "debug-folder", &argparse.Options{Required: false, Help: "Folder to store debug results to"})
 	debug_codes := parser.String("", "debug-codes", &argparse.Options{Required: false, Help: "Comma separated http response codes to debug, --debug-folder required. Ex: 302,403"})
 	proxy := parser.String("p", "proxy", &argparse.Options{Required: false, Help: "Http proxy config"})
 	elog := parser.String("", "elog", &argparse.Options{Required: false, Help: "Filename to write error logs"})
+	json_output := parser.Flag("", "json", &argparse.Options{Required: false, Help: "Output as json"})
 	err := parser.Parse(os.Args)
 	if err != nil || (*debug_codes != "" && *debug_folder == "") {
 		// In case of error print error and print usage
@@ -110,9 +112,29 @@ func main() {
 			go func(url string) {
 				defer wg.Done()
 				counter.Incr(1)
-				xss_url, vuln := xss.FindXss(url, *headers, *timeout, debug_codes_list, debug_responses, *proxy, *elog)
-				if vuln && *output_file != "" {
-					xss.AppendResultToOutputFile(xss_url, *output_file)
+				output, isvuln := xss.FindXss(url, *headers, *timeout, debug_codes_list, debug_responses, *proxy, *elog)
+				if isvuln {
+					if *json_output {
+						b, err := json.Marshal(output)
+						if err == nil {
+							fmt.Println(string(b))
+						}
+					} else {
+						fmt.Println(output.Description)
+					}
+					if *output_file != "" {
+						if *json_output {
+							b, err := json.Marshal(output)
+							if err != nil {
+								panic(err)
+							}
+							xss.AppendResultToOutputFile(string(b), *output_file)
+
+						} else {
+							xss.AppendResultToOutputFile(output.Url, *output_file)
+						}
+
+					}
 				}
 				<-semaphore
 				if *debug {
