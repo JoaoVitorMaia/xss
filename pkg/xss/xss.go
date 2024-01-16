@@ -22,16 +22,23 @@ var HtmlInjectionTags = []string{
 }
 
 var ReflectedOnTagAtribute = []string{
-	`gr3pth1s"`,
-	`gr3pth1s'`,
+	`gr3pth1s"x`,
+	`gr3pth1s'x`,
 }
 
-var insideTagReflectionRegex = `(?i)<([^<>]*)gr3pth1s["']([^<>]*)>`
+var insideTagReflectionRegex = `(?i)<([^<>]*)gr3pth1s["']x([^<>]*)>`
 var notInComment = `<!--[\s\S]*?gr3pth1s[\s\S]*?-->`
 
 type UrlParameter struct {
 	key   string
 	value string
+}
+
+type Output struct {
+	Param       string `json:"param"`
+	Url         string `json:"url"`
+	Description string `json:"description"`
+	Payload     string `json:"payload"`
 }
 
 func CreateUrls(raw_url string) []string {
@@ -94,7 +101,7 @@ func AppendResultToOutputFile(result string, outputfile string) {
 	}
 	file.WriteString(fmt.Sprintf("%s\n", result))
 }
-func FindXss(url_to_validate string, headers []string, timeout int, debug_codes []int, debug_responses chan string, proxy string, elogfilename string) (string, bool) {
+func FindXss(url_to_validate string, headers []string, timeout int, debug_codes []int, debug_responses chan string, proxy string, elogfilename string) (Output, bool) {
 	var client *http.Client
 	if proxy == "" {
 		client = &http.Client{
@@ -118,7 +125,7 @@ func FindXss(url_to_validate string, headers []string, timeout int, debug_codes 
 		if elogfilename != "" {
 			AppendResultToOutputFile(err.Error(), elogfilename)
 		}
-		return "", false
+		return Output{}, false
 	}
 	has_user_agent := false
 	for _, header := range headers {
@@ -136,7 +143,7 @@ func FindXss(url_to_validate string, headers []string, timeout int, debug_codes 
 		if elogfilename != "" {
 			AppendResultToOutputFile(err.Error(), elogfilename)
 		}
-		return "", false
+		return Output{}, false
 	}
 
 	defer resp.Body.Close()
@@ -146,25 +153,65 @@ func FindXss(url_to_validate string, headers []string, timeout int, debug_codes 
 		if elogfilename != "" {
 			AppendResultToOutputFile(err.Error(), elogfilename)
 		}
-		return "", false
+		return Output{}, false
 	}
 	body := string(body_buff)
 	if slices.Contains(debug_codes, resp.StatusCode) {
 
 		debug_responses <- createDebugString(*req, *resp)
 	}
+	var output Output
+
 	for _, payload := range HtmlInjectionTags {
 		if strings.Contains(body, payload) {
-			fmt.Printf("%s reflection found\n", url_to_validate)
-			return url_to_validate, true
+			parsed_url, err := url.Parse(url_to_validate)
+			if err != nil {
+				return Output{}, false
+			}
+			var param string
+			qs := parsed_url.Query()
+			for key, value := range qs {
+				if value[0] == payload {
+					param = key
+				}
+			}
+			output = Output{
+				Url:         url_to_validate,
+				Description: fmt.Sprintf("Possible xss found on %s on param %s", url_to_validate, param),
+				Payload:     payload,
+				Param:       param,
+			}
+
+			return output, true
 		}
 	}
 	r, _ := regexp.Compile(insideTagReflectionRegex)
 	r2, _ := regexp.Compile(notInComment)
 	matches := r.FindStringSubmatch(body)
 	if len(matches) > 0 && !r2.MatchString(matches[0]) {
-		fmt.Printf("%s reflection found\n", url_to_validate)
-		return url_to_validate, true
+		for _, payload := range ReflectedOnTagAtribute {
+			parsed_url, err := url.Parse(url_to_validate)
+			if err != nil {
+				return Output{}, false
+			}
+			var param string
+			qs := parsed_url.Query()
+			for key, value := range qs {
+				if value[0] == payload {
+					param = key
+				}
+			}
+			output = Output{
+				Url:         url_to_validate,
+				Description: fmt.Sprintf("Possible xss found on %s on param %s", url_to_validate, param),
+				Payload:     payload,
+				Param:       param,
+			}
+
+			return output, true
+
+		}
+		return output, true
 	}
-	return "", false
+	return Output{}, false
 }
