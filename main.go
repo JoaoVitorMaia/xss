@@ -10,6 +10,7 @@ import (
 
 	"github.com/akamensky/argparse"
 	"github.com/joaovitormaia/xss/pkg/xss"
+	"github.com/paulbellamy/ratecounter"
 )
 
 var (
@@ -21,9 +22,10 @@ func main() {
 	headers := parser.StringList("H", "headers", &argparse.Options{Required: false, Help: "Curl like headers"})
 	timeout := parser.Int("t", "timeout", &argparse.Options{Required: false, Default: 10, Help: "Request timeout"})
 	concurrency := parser.Int("c", "concurrency", &argparse.Options{Required: false, Default: 40, Help: "Limit concurrency"})
-	filename := parser.String("f", "file", &argparse.Options{Required: false})
+	input := parser.String("i", "input", &argparse.Options{Required: false})
 	output_file := parser.String("o", "output", &argparse.Options{Required: false})
 	rate_limit := parser.Int("r", "rate-limit", &argparse.Options{Required: false, Default: -1, Help: "Limit requests per second"})
+	debug := parser.Flag("d", "debug", &argparse.Options{Required: false, Default: false})
 	err := parser.Parse(os.Args)
 	var results []string
 	if err != nil {
@@ -33,8 +35,8 @@ func main() {
 		return
 	}
 	var scanner *bufio.Scanner
-	if *filename != "" {
-		file, err := os.Open(*filename)
+	if *input != "" {
+		file, err := os.Open(*input)
 		if err != nil {
 			panic(err)
 		}
@@ -51,8 +53,10 @@ func main() {
 	for scanner.Scan() {
 
 		input_url := scanner.Text()
+		counter := ratecounter.NewRateCounter(1 * time.Second)
 
 		urls := xss.CreateUrls(input_url)
+		counter.Incr(1)
 		for _, url := range urls {
 			if *rate_limit > 0 {
 				<-limiter
@@ -60,9 +64,13 @@ func main() {
 			wg.Add(1)
 			semaphore <- true
 			go func(url string) {
-				results = append(results, xss.FindXss(url, *headers, *timeout)...)
+				counter.Incr(1)
+				results = append(results, xss.FindXss(url, *headers, *timeout))
 				wg.Done()
 				<-semaphore
+				if *debug {
+					fmt.Printf("%d requests per second\r", counter.Rate())
+				}
 			}(url)
 
 		}
