@@ -2,7 +2,10 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"strconv"
@@ -19,17 +22,8 @@ var (
 	wg sync.WaitGroup
 )
 
-func AppendResultToOutputFile(result string, outputfile string) {
-	file, err := os.OpenFile(outputfile,
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Println(err)
-	}
-	defer file.Close()
-	if err != nil {
-		panic(err)
-	}
-	file.WriteString(fmt.Sprintf("%s\n", result))
+func SaveDebugFile(content string, filename string, folder string) {
+	ioutil.WriteFile(fmt.Sprintf("%s/%s.txt", folder, filename), []byte(content), 0644)
 }
 
 func main() {
@@ -44,6 +38,7 @@ func main() {
 	debug_folder := parser.String("", "debug-folder", &argparse.Options{Required: false, Help: "Folder to store debug results to"})
 	debug_codes := parser.String("", "debug-codes", &argparse.Options{Required: false, Help: "Comma separated http response codes to debug, --debug-folder required. Ex: 302,403"})
 	proxy := parser.String("p", "proxy", &argparse.Options{Required: false, Help: "Http proxy config"})
+	elog := parser.String("", "elog", &argparse.Options{Required: false, Help: "Filename to write error logs"})
 	err := parser.Parse(os.Args)
 	if err != nil || (*debug_codes != "" && *debug_folder == "") {
 		// In case of error print error and print usage
@@ -65,7 +60,15 @@ func main() {
 			debug_codes_list = append(debug_codes_list, int_code)
 		}
 	}
-
+	if *debug_folder != "" {
+		_, err := os.Stat(*debug_folder)
+		if os.IsNotExist(err) {
+			err := os.Mkdir(*debug_folder, 0755)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+	}
 	var scanner *bufio.Scanner
 	if *input != "" {
 		file, err := os.Open(*input)
@@ -84,8 +87,16 @@ func main() {
 	counter := ratecounter.NewRateCounter(1 * time.Second)
 
 	limiter := time.Tick(period)
+	go func() {
+		for message := range debug_responses {
+			sha1Hash := sha1.New()
+			sha1Hash.Write([]byte(message))
+			hashBytes := sha1Hash.Sum(nil)
+			filename := hex.EncodeToString(hashBytes)
+			SaveDebugFile(message, filename, *debug_folder)
+		}
+	}()
 	for scanner.Scan() {
-
 		input_url := scanner.Text()
 
 		urls := xss.CreateUrls(input_url)
@@ -99,9 +110,9 @@ func main() {
 			go func(url string) {
 				defer wg.Done()
 				counter.Incr(1)
-				xss_url, vuln := xss.FindXss(url, *headers, *timeout, debug_codes_list, debug_responses, *proxy)
+				xss_url, vuln := xss.FindXss(url, *headers, *timeout, debug_codes_list, debug_responses, *proxy, *elog)
 				if vuln && *output_file != "" {
-					AppendResultToOutputFile(xss_url, *output_file)
+					xss.AppendResultToOutputFile(xss_url, *output_file)
 				}
 				<-semaphore
 				if *debug {
