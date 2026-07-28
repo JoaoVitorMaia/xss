@@ -13,3 +13,4 @@ The tool aims to identify html injection possibilities in GET parameters, lettin
 
 ### Help
 <code>xss -h</code>
+teste
